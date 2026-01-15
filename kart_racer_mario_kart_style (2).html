@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>NEO KART — Switch‑Grade (WebGL)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    html,body{margin:0;height:100%;background:#000;color:#fff;font-family:Inter,system-ui,sans-serif;overflow:hidden}
+    #hud{position:fixed;inset:0;pointer-events:none}
+    .glass{position:absolute;left:16px;top:16px;background:rgba(10,14,30,.55);backdrop-filter:blur(18px);border-radius:16px;padding:14px 16px;border:1px solid rgba(0,200,255,.18);box-shadow:0 30px 80px rgba(0,0,0,.6)}
+    .glass b{letter-spacing:.12em;color:#7cf}
+    #stats{top:auto;bottom:16px}
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div class="glass"><b>NEO KART</b><div style="opacity:.7;font-size:13px">↑↓ accel · ←→ steer · Space boost</div></div>
+    <div class="glass" id="stats"></div>
+  </div>
+
+  <!-- Three.js (WebGL) -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/examples/js/postprocessing/EffectComposer.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/examples/js/postprocessing/RenderPass.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+<script>
+// =====================================================
+// Switch‑grade baseline: real 3D, lighting, bloom, camera
+// =====================================================
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x050814, 40, 180);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 500);
+camera.position.set(0, 3.2, 7);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+// Lights (PBR-ish)
+scene.add(new THREE.HemisphereLight(0x6fb6ff, 0x080b14, 0.8));
+const key = new THREE.DirectionalLight(0xffffff, 1.2);
+key.position.set(6,10,4);
+key.castShadow = true;
+scene.add(key);
+
+// Track (banked ribbon)
+const trackMat = new THREE.MeshStandardMaterial({ color:0x151515, roughness:0.85, metalness:0.1 });
+const trackGeo = new THREE.PlaneGeometry(20, 400, 40, 400);
+trackGeo.rotateX(-Math.PI/2);
+
+// add banking & elevation
+const pos = trackGeo.attributes.position;
+for(let i=0;i<pos.count;i++){
+  const z = pos.getZ(i);
+  const curve = Math.sin(z*0.06)*1.6;
+  const bank = Math.sin(z*0.08)*0.6;
+  pos.setX(i, pos.getX(i) + curve);
+  pos.setY(i, bank);
+}
+trackGeo.computeVertexNormals();
+const track = new THREE.Mesh(trackGeo, trackMat);
+scene.add(track);
+
+// Neon edges
+const edgeMat = new THREE.MeshStandardMaterial({ color:0x00eaff, emissive:0x00eaff, emissiveIntensity:1.5 });
+const edgeL = new THREE.Mesh(new THREE.BoxGeometry(.2,.05,400), edgeMat);
+edgeL.position.set(-9.9,.05,-200);
+const edgeR = edgeL.clone(); edgeR.position.x=9.9;
+scene.add(edgeL, edgeR);
+
+// Kart (placeholder geometry — swap with GLTF later)
+const kart = new THREE.Group();
+const body = new THREE.Mesh(new THREE.BoxGeometry(1.4,.4,2.2), new THREE.MeshStandardMaterial({ color:0xff3b3b, metalness:.6, roughness:.3 }));
+const canopy = new THREE.Mesh(new THREE.BoxGeometry(.7,.3,.8), new THREE.MeshStandardMaterial({ color:0x111111 }));
+canopy.position.y=.35; canopy.position.z=-.1;
+kart.add(body, canopy);
+kart.position.set(0,.35,2);
+scene.add(kart);
+
+// Postprocessing (bloom like MK8)
+const composer = new THREE.EffectComposer(renderer);
+composer.addPass(new THREE.RenderPass(scene, camera));
+const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight), .9, .4, .85);
+composer.addPass(bloom);
+
+// Input & physics (arcade)
+const keys={}; addEventListener('keydown',e=>keys[e.code]=true); addEventListener('keyup',e=>keys[e.code]=false);
+let speed=0, boost=1.8, steer=0, t=0;
+
+function resize(){
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight); composer.setSize(innerWidth,innerHeight);
+}
+addEventListener('resize', resize);
+
+const stats = document.getElementById('stats');
+
+function animate(){
+  requestAnimationFrame(animate);
+  const accel = (keys.ArrowUp?1:0) - (keys.ArrowDown?1:0);
+  speed += accel*0.04; speed*=0.985; speed=Math.max(0, Math.min(speed, boost>0&&keys.Space?0.9:0.7));
+  steer += ((keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0))*0.03; steer*=0.9;
+  if(keys.Space&&boost>0) boost-=0.01;
+
+  t += speed*1.2;
+  kart.rotation.y = steer*0.6;
+  kart.position.x = steer*3;
+
+  camera.position.z = 7 - speed*1.2;
+  camera.position.x = kart.position.x*0.4;
+  camera.lookAt(0,1,-6);
+
+  track.position.z = (t%400)-200;
+  edgeL.position.z = track.position.z;
+  edgeR.position.z = track.position.z;
+
+  stats.textContent = `SPEED ${speed.toFixed(2)}  BOOST ${boost.toFixed(2)}`;
+  composer.render();
+}
+setInterval(()=>boost=Math.min(boost+0.4,2.2),4500);
+animate();
+</script>
+</body>
+</html>
